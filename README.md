@@ -8,6 +8,10 @@ material loaded only when it is needed. Any harness that can read a skill and ru
 a shell command can use them. There is no MCP server, no plugin API and no agent
 framework to install.
 
+**New here?** [INSTALL.md](./INSTALL.md) walks through downloading, installing
+and running the job search skills for the first time, from a CV to a Match
+Report.
+
 ## The skills
 
 | Skill | What it gives you | Needs | Scripts |
@@ -319,8 +323,8 @@ Exit codes are consistent enough to branch on:
 
 ## Install
 
-Copy or symlink each skill folder into a harness skill directory, for example
-`~/.agents/skills/` or `~/.claude/skills/`:
+The short version: copy or symlink each skill folder into a harness skill
+directory, for example `~/.agents/skills/` or `~/.claude/skills/`:
 
 ```sh
 for skill in candidate-profile job-search-terms job-search match-jobs; do
@@ -330,6 +334,10 @@ done
 
 The skills are independent enough to install separately, but the pipeline needs
 all four, because each one names the skill that feeds it.
+
+For the full user-facing walkthrough — choosing a skill directory, setting up a
+workspace, installing Chromium, signing in to LinkedIn, using the skills through
+an agent and troubleshooting — see [INSTALL.md](./INSTALL.md).
 
 ## Layout
 

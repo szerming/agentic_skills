@@ -91,6 +91,9 @@ ln -s "$PWD/skills/job-search" ~/.agents/skills/job-search
 The four skills are independent enough to install separately, but the pipeline
 only works with all four present: each one names the skill that feeds it.
 
+For the user-facing walkthrough, including workspace setup, LinkedIn sign-in and
+troubleshooting, see [../INSTALL.md](../INSTALL.md).
+
 Prerequisites:
 
 - `uv` (the scripts declare their own dependencies inline)
