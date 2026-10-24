@@ -346,7 +346,8 @@ The tests cover everything deterministic: URL construction, dedupe, the cache an
 its prune, the collect wiring end to end with a faked browser, chunking, contract
 enforcement, report rendering and the committed schemas. `test_models_parity.py`
 imports the previous pydantic-ai implementation read-only and asserts the Match
-Report Markdown is byte-identical to it.
+Report Markdown is byte-identical to it; set `JOBSEARCH_REFERENCE` to that
+checkout to run it, otherwise those tests skip.
 
 Regenerate the schemas after changing `job_models.py`:
 
