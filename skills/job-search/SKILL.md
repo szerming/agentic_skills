@@ -36,8 +36,12 @@ Three things can come back:
   current directory. If the user is in a git repo, tell them to add `.jobsearch/`
   to `.gitignore`. Never edit `.gitignore` yourself without asking.
 
-- **`chromium` failed.** Run `uv run --with playwright playwright install chromium`,
-  then `doctor` again.
+- **`chromium` failed.** The check resolves the exact browser build Playwright
+  will launch, so an old `chromium-*` directory does not count. Run
+  `uv run --with playwright playwright install chromium`, then `doctor` again.
+  On a host where only a system Chrome exists, pass
+  `--channel chrome` (or `--executable-path <chrome>`) to `doctor`, `login`,
+  `collect` and `describe` instead.
 
 - **`session_dir` failed, or the user has never logged in.**
 
@@ -48,6 +52,16 @@ Three things can come back:
   A browser window opens. Tell the user to sign in there, including any 2FA. The
   command blocks until LinkedIn's auth cookie appears, up to ten minutes. Do not
   start a run before this succeeds.
+
+  If Google says the browser or app is not secure, Playwright's Chromium is being
+  refused for OAuth. Re-run with a stock browser:
+
+  ```
+  uv run scripts/jobsearch.py login --channel chrome
+  ```
+
+  or point at a binary directly with `--executable-path <chrome>`. The profile is
+  shared, so `collect` and `doctor` keep using the default browser afterwards.
 
 `search_terms` and `profile` appear in `doctor` as non-critical checks. If either
 is missing, use the `job-search-terms` or `candidate-profile` skill.
@@ -107,10 +121,14 @@ All under the workspace, never inside this skill's directory:
 
 | Path | Meaning |
 |---|---|
-| `<home>/jobs.db` | Description cache, keyed by job URL. Shared by every run. |
+| `<candidate>/jobs.db` | This candidate's description cache, keyed by job URL. Shared by every run for that candidate. |
+| `<candidate>/runs/<timestamp>/descriptions.json` | The Job Descriptions. |
+| `<candidate>/runs/<timestamp>/run.json` | Provenance: terms, source, counts, hashes. |
 | `<home>/session/` | Persistent Chromium profile. Never commit it. |
-| `<home>/runs/<timestamp>/descriptions.json` | The Job Descriptions. |
-| `<home>/runs/<timestamp>/run.json` | Provenance: terms, source, counts, hashes. |
+
+`<candidate>` is `<home>/candidates/<name>`. If the workspace holds more than one
+candidate, pass `--candidate <name>` to every command; otherwise the skill refuses
+to guess.
 
 Only ever pass the run directory from the JSON output to the next skill. Do not
 construct run paths by hand.
@@ -131,7 +149,7 @@ construct run paths by hand.
 |---|---|
 | 0 | Worked |
 | 1 | `doctor` found a failed critical check |
-| 2 | Configuration problem, for example no workspace |
+| 2 | Configuration problem, for example no workspace, or a browser that will not launch |
 | 3 | The work could not be completed, for example no search terms |
 | 4 | No LinkedIn session, or it expired mid-run |
 

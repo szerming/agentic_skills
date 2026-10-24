@@ -18,6 +18,7 @@ without it installed.
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 import urllib.parse
 from dataclasses import dataclass
@@ -43,9 +44,15 @@ SEL_CARD_TITLE = ".job-card-list__title--link"
 SEL_CARD_COMPANY = ".artdeco-entity-lockup__subtitle"
 SEL_CARD_LOCATION = ".artdeco-entity-lockup__caption"
 SEL_PAGINATION = ".jobs-search-pagination"
-SEL_DESCRIPTION = 'div[data-display-contents="true"]'
+SEL_DESCRIPTION = '[componentkey^="JobDetails_AboutTheJob_"]'
+SEL_DESCRIPTION_BODY = 'span[data-testid="expandable-text-box"]'
 DESCRIPTION_HEADING = "About the job"
 NO_JOBS_TEXT = "No matching jobs found."
+
+# LinkedIn virtualises the results list: only the cards near the viewport are
+# hydrated, the rest are empty placeholders. Each card has to be scrolled into
+# view and given a moment to render before it can be read.
+CARD_HYDRATE_DELAY = 0.3
 
 
 class LinkedInError(RuntimeError):
@@ -66,6 +73,10 @@ class BrowserConfig:
     workplace_types: tuple[int, ...] = (1, 2, 3)  # On-site, Remote, Hybrid
     delay: float = 1.0
     timeout_ms: int = 15000
+    # Google refuses OAuth ("browser or app may not be secure") from Playwright's
+    # automation-flagged Chromium. Point these at a stock Chrome to sign in.
+    channel: str | None = None
+    executable_path: str | None = None
 
 
 def build_search_url(
@@ -124,6 +135,8 @@ class LinkedInBrowser:
             user_data_dir=str(self.config.session_dir),
             headless=self.config.headless,
             viewport={"width": 1440, "height": 900},
+            channel=self.config.channel,
+            executable_path=self.config.executable_path,
         )
         self._page = (
             self._context.pages[0] if self._context.pages else await self._context.new_page()
@@ -162,13 +175,21 @@ class LinkedInBrowser:
 
     async def login(self, timeout_s: int = 600) -> bool:
         """Open the login page and wait for the human to finish, detecting success by cookie."""
-        await self._page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        try:
+            await self._page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        except Exception as exc:  # noqa: BLE001
+            raise LinkedInError(f"could not open {LOGIN_URL}: {exc}") from exc
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
         while loop.time() < deadline:
-            if await self.has_session():
-                self._session_checked = True
-                return True
+            try:
+                if await self.has_session():
+                    self._session_checked = True
+                    return True
+            except Exception as exc:  # noqa: BLE001
+                raise LinkedInError(
+                    "the browser window closed before sign-in completed"
+                ) from exc
             await asyncio.sleep(2)
         return False
 
@@ -194,9 +215,15 @@ class LinkedInBrowser:
         return results
 
     async def fetch_page(self, base_url: str, page_index: int) -> tuple[list[JobEntry], bool]:
-        """One results page. Returns the entries found and whether a next page exists."""
+        """One results page. Returns the entries found and whether a next page exists.
+
+        The list is virtualised, so scrolling to the footer and reading the
+        cards once keeps only the handful that happen to be hydrated. Walk the
+        cards in order and keep each one as it renders instead.
+        """
         url = with_page(base_url, page_index)
         entries: list[JobEntry] = []
+        seen: set[str] = set()
 
         try:
             await self._page.goto(url, wait_until="domcontentloaded")
@@ -207,14 +234,15 @@ class LinkedInBrowser:
 
             await self._page.wait_for_selector(SEL_RESULTS_LIST)
             await self._page.wait_for_selector(SEL_RESULTS_FOOTER)
-            await self._page.locator(SEL_RESULTS_FOOTER).scroll_into_view_if_needed()
-            await asyncio.sleep(self.config.delay)  # let lazy cards render
 
-            cards = await self._page.locator(SEL_CARD).all()
-            for card in cards:
-                entry = await self._read_card(card)
-                if entry is not None:
-                    entries.append(entry)
+            cards = self._page.locator(SEL_CARD)
+            total = await self._settle_cards(cards)
+            for index in range(total):
+                entry = await self._hydrate_card(cards.nth(index))
+                if entry is None or entry.url in seen:
+                    continue
+                seen.add(entry.url)
+                entries.append(entry)
 
             has_next = False
             if await self._page.is_visible(SEL_PAGINATION):
@@ -229,13 +257,51 @@ class LinkedInBrowser:
                 f"{len(entries)} entries gathered so far",
                 file=sys.stderr,
             )
+            return entries, False
 
         return entries, has_next
+
+    async def _settle_cards(self, cards) -> int:
+        """Wait for the virtualised list to finish hydrating.
+
+        LinkedIn renders the first few cards, then appends the rest a beat
+        later (7 to 25 in about a second in practice). Counting once keeps the
+        first batch and silently drops the rest.
+        """
+        count = await cards.count()
+        stable = 0
+        for _ in range(20):  # at most ~10s
+            await asyncio.sleep(0.5)
+            current = await cards.count()
+            if current == count:
+                stable += 1
+                if stable >= 2:
+                    break
+            else:
+                count = current
+                stable = 0
+        return count
+
+    async def _hydrate_card(self, card) -> JobEntry | None:
+        """Scroll one virtualised card into view, then read it."""
+        try:
+            await card.scroll_into_view_if_needed(timeout=3000)
+        except Exception:  # noqa: BLE001 - a card we cannot scroll is still worth a read
+            pass
+        await asyncio.sleep(CARD_HYDRATE_DELAY)
+        for _ in range(8):
+            entry = await self._read_card(card)
+            if entry is not None:
+                return entry
+            await asyncio.sleep(CARD_HYDRATE_DELAY)
+        return None
 
     async def _read_card(self, card) -> JobEntry | None:
         """Read one result card. Missing fields degrade instead of aborting the page."""
         try:
             title_locator = card.locator(SEL_CARD_TITLE)
+            if not await title_locator.count():
+                return None  # still a placeholder; the caller retries
             title = (await title_locator.inner_text()).strip()
 
             href = await title_locator.get_attribute("href")
@@ -289,12 +355,24 @@ class LinkedInBrowser:
             await self._page.goto(entry.url, wait_until="domcontentloaded")
             self._guard_url(self._page.url)
 
-            container = (
-                self._page.locator(SEL_DESCRIPTION)
-                .filter(has=self._page.get_by_role("heading", name=DESCRIPTION_HEADING))
-                .first
-            )
-            text = (await container.inner_text()).strip()
+            container = self._page.locator(SEL_DESCRIPTION).first
+            await container.wait_for(state="attached", timeout=self.config.timeout_ms)
+
+            body = container.locator(SEL_DESCRIPTION_BODY)
+            text = ""
+            for _ in range(20):  # the component attaches before it has text
+                if await body.count():
+                    text = (await body.first.inner_text()).strip()
+                if text:
+                    break
+                await asyncio.sleep(0.3)
+            if not text:
+                text = (await container.inner_text()).strip()
+                if text.startswith(DESCRIPTION_HEADING):
+                    text = text[len(DESCRIPTION_HEADING) :].strip()
+            # The expander is a button inside the text span, not part of the
+            # posting; inner_text renders it as a trailing "… more".
+            text = re.sub(r"\s*(?:…|\.\.\.)\s*more\s*$", "", text).strip()
             if not text:
                 raise LinkedInError("description container was empty")
 

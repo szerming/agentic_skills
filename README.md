@@ -21,14 +21,17 @@ The four compose into one pipeline. Run them out of order and the scripts refuse
 naming the skill that produces what is missing.
 
 ```
-candidate-profile      CV PDF          -> <home>/profile.json
+candidate-profile      CV PDF          -> <candidate>/cv/ + <candidate>/profile.json
         |
-job-search-terms       profile         -> <home>/search_terms.json
+job-search-terms       profile         -> <candidate>/search_terms.json
         |
-job-search             terms           -> <run>/descriptions.json   (+ <home>/jobs.db)
+job-search             terms           -> <run>/descriptions.json   (+ <candidate>/jobs.db)
         |
 match-jobs             profile + run   -> <run>/matches/*.json -> <run>/report.md
 ```
+
+`<candidate>` is `<home>/candidates/<name>`: one folder per person, holding their
+CV, profile, terms, cache and runs. See [Workspace](#workspace).
 
 ## job-search: what the reader gets
 
@@ -48,20 +51,32 @@ What it can do:
   field that fails
 - print the schema it is aiming at, so the model writes to a contract rather than
   guessing
+- find or prepare the candidate folder, and say what is still missing: create the
+  folder, copy in a supplied CV, or report that it is ready to extract
 
-What it produces: `<home>/cv.txt` and `<home>/profile.json`, holding headline,
+What it produces: the CV copied into `<candidate>/cv/`, its text at
+`<candidate>/cv.txt`, and `<candidate>/profile.json`, holding headline,
 seniority, years of experience, hard and soft skills, domains, target titles,
 strengths, evidence snippets and the full experience and education history.
 
 Its rules are in the skill, not the code: only facts the CV supports, conservative
 inference of seniority, evidence-backed strengths, and ask before overwriting a
-profile the user may have hand-edited.
+profile the user may have hand-edited. Degree dates are optional in the schema,
+because CVs often omit them and inventing them would break the first rule.
 
 ```sh
+uv run skills/candidate-profile/scripts/jobprofile.py candidate
+uv run skills/candidate-profile/scripts/jobprofile.py candidate --candidate alex --cv ~/cv.pdf
 uv run skills/candidate-profile/scripts/jobprofile.py text --pdf ~/cv.pdf
-uv run skills/candidate-profile/scripts/jobprofile.py validate --in resource/profile.json
+uv run skills/candidate-profile/scripts/jobprofile.py validate \
+  --in resource/candidates/alex/profile.json
 uv run skills/candidate-profile/scripts/jobprofile.py schema
 ```
+
+`candidate` returns a `next` block rather than failing when state is incomplete:
+`create_candidate`, `drop_cv`, `extract_profile` or `ready`. Supplying a CV from
+anywhere copies it into the candidate folder, so the next run finds it without
+being told where it came from.
 
 ### job-search-terms
 
@@ -79,8 +94,9 @@ What it can do:
 - explain the location trap: the scraper filters by a fixed LinkedIn `geoId`, so a
   city name in the terms file does nothing
 
-What it produces: `<home>/search_terms.json`, a bare JSON array, and only after
-the user has seen the proposed table and agreed. The cap is twelve terms per run.
+What it produces: `<candidate>/search_terms.json`, a bare JSON array, and only
+after the user has seen the proposed table and agreed. The cap is twelve terms per
+run.
 
 ### job-search
 
@@ -96,7 +112,13 @@ What it can do:
   fetch, not four
 - keep a SQLite cache keyed by URL and skip any posting it has already described,
   which is where the bandwidth saving lives: a second run over the same listing is
-  nearly free
+  nearly free. The cache is per candidate, so two people in one workspace never
+  share postings they did not search for
+- resolve LinkedIn's virtualised result list: cards hydrate in batches as the list
+  grows and again as each card scrolls into view, so the list is walked rather than
+  sampled once
+- read the posting from its stable `JobDetails_AboutTheJob_<id>` component, because
+  LinkedIn's visible class names are now generated per build
 - filter by posting age, LinkedIn `geoId`, seniority level and workplace type
 - pace itself with a one second delay between requests, configurable but not
   advisable to lower
@@ -107,17 +129,23 @@ What it can do:
 - dump the page HTML for a posting when a selector breaks, so the fix is one file
 
 What it produces: a run directory with `descriptions.json` (the `JobDescription`
-contract) and `run.json` (source, terms, counts, description hash), plus the shared
-cache and the persistent browser session.
+contract) and `run.json` (source, terms, counts, description hash), plus the
+candidate's cache and the persistent browser session.
 
 | Command | Purpose |
 |---|---|
-| `doctor` | Chromium, session, workspace writability, terms, profile and cache, as JSON with a `fix` per failure |
+| `doctor` | Browser build, session, workspace writability, candidate, terms, profile and cache, as JSON with a `fix` per failure |
 | `login` | Opens a browser and waits for the LinkedIn auth cookie, up to ten minutes |
 | `collect` | The happy path: search, dedupe, describe, cache |
 | `describe` | One posting, for debugging selectors |
 | `cache stats` / `cache prune` | Inspect or trim the description cache |
 | `validate` / `schema` | Contract check and JSON Schema |
+
+`login`, `collect`, `describe` and `doctor` accept `--candidate <name>` when the
+workspace holds more than one candidate, and `--channel chrome` or
+`--executable-path <chrome>` when Google refuses OAuth from Playwright's Chromium
+("this browser or app may not be secure"). The signed-in profile is shared, so the
+browser used for sign-in does not have to be the one used for scraping.
 
 ```sh
 uv run skills/job-search/scripts/jobsearch.py doctor
@@ -140,12 +168,13 @@ What it can do:
 - enforce exactly one result per job, with matching URLs, before anything is
   rendered. A chunk that skipped a job invalidates the run rather than quietly
   producing a shorter report
-- refuse to render while any chunk is unscored, and name the chunks that need
-  work. That refusal is the resume mechanism: fix the named chunks, run `report`
-  again, and nothing already scored is lost
+- refuse to render while any chunk is unscored, and name the chunk and the job
+  that is missing. That refusal is the resume mechanism: fix the named chunks, run
+  `report` again, and nothing already scored is lost
 - merge, sort and render the Match Report, with every score kept in
   `matches.all.json` and only the ones at or above the threshold in `report.md`
-- count results by score band, so the shape of the run is visible at a glance
+- count results by score band, and persist those counts alongside the scores, so
+  the shape of the run is visible at a glance
 - score a single pasted job with `fit`, without creating a run
 
 The rubric it follows weights skills at 40%, experience relevance at 20%, domain
@@ -154,8 +183,8 @@ alignment and seniority at 15% each, and tools at 10%, with bands from excellent
 like any other document.
 
 ```sh
-uv run skills/match-jobs/scripts/jobmatch.py prepare --run resource/runs/<stamp>
-uv run skills/match-jobs/scripts/jobmatch.py report --run resource/runs/<stamp>
+uv run skills/match-jobs/scripts/jobmatch.py prepare --run resource/candidates/alex/runs/<stamp>
+uv run skills/match-jobs/scripts/jobmatch.py report --run resource/candidates/alex/runs/<stamp>
 uv run skills/match-jobs/scripts/jobmatch.py fit --match /tmp/one-match.json
 ```
 
@@ -167,20 +196,24 @@ domain, link, reasoning, strengths, gaps and a collapsible full description.
 
 ```sh
 # once per machine
-uv run skills/job-search/scripts/jobsearch.py init --home ./resource
+uv run skills/job-search/scripts/jobsearch.py init --home ./resource --candidate alex
 uv run --with playwright playwright install chromium
 uv run skills/job-search/scripts/jobsearch.py login
+# add --channel chrome if Google says the browser is not secure
 
-# once per CV
-uv run skills/candidate-profile/scripts/jobprofile.py text --pdf ~/cv.pdf
-# the skill writes resource/profile.json and validates it
+# once per candidate
+uv run skills/candidate-profile/scripts/jobprofile.py candidate \
+  --candidate alex --cv ~/cv.pdf
+# the model then extracts and validates resource/candidates/alex/profile.json
 
 # once per search, then whenever you want fresh jobs
 uv run skills/job-search/scripts/jobsearch.py collect --past-days 7
 
 # scoring, chunk by chunk, then the report
-uv run skills/match-jobs/scripts/jobmatch.py prepare --run resource/runs/<stamp>
-uv run skills/match-jobs/scripts/jobmatch.py report --run resource/runs/<stamp>
+uv run skills/match-jobs/scripts/jobmatch.py prepare \
+  --run resource/candidates/alex/runs/<stamp>
+uv run skills/match-jobs/scripts/jobmatch.py report \
+  --run resource/candidates/alex/runs/<stamp>
 ```
 
 The commands in the middle, the ones that write `profile.json`, `search_terms.json`
@@ -199,21 +232,37 @@ in this order:
 3. `.jobsearch/config.json`, walking up from the current directory
 4. otherwise the skill asks the user, defaulting to `./resource`
 
+Within a workspace, the candidate is resolved independently:
+
+1. `--candidate <name>`
+2. `$JOBSEARCH_CANDIDATE`
+3. the `candidate` key in `.jobsearch/config.json`
+4. the only folder under `<home>/candidates`, when there is exactly one
+5. otherwise the flat, pre-candidate layout: `<home>` itself
+
 ```
 <home>/
-├── profile.json
-├── search_terms.json
-├── cv.txt
-├── jobs.db                    description cache, keyed by job URL
-├── session/                   persistent Chromium profile, never commit
-└── runs/<timestamp>/
-    ├── descriptions.json      the run's input
-    ├── run.json               provenance: source, terms, counts, hash
-    ├── chunks/chunk-NN.json   what the model scores
-    ├── matches/chunk-NN.json  what the model scored
-    ├── matches.all.json       every score, including below threshold
-    └── report.md              the ranked Match Report
+├── session/                       persistent Chromium profile, never commit
+└── candidates/<name>/
+    ├── cv/                        the original CV, exactly as supplied
+    ├── cv.txt                     text extracted from it
+    ├── profile.json               the Candidate Profile
+    ├── search_terms.json          the Search Terms
+    ├── jobs.db                    description cache, keyed by job URL
+    └── runs/<timestamp>/
+        ├── descriptions.json      the run's input
+        ├── run.json               provenance: source, terms, counts, hash
+        ├── chunks/chunk-NN.json   what the model scores
+        ├── matches/chunk-NN.json  what the model scored
+        ├── matches.all.json       every score, plus band counts
+        └── report.md              the ranked Match Report
 ```
+
+The session sits at workspace level because it belongs to the LinkedIn account,
+not to a person. Everything else is per candidate, so one workspace can hold
+several people without mixing caches, profiles or reports. A workspace created
+before this layout (profile, terms, cache and runs directly under `<home>`) keeps
+working; `init --candidate` creates the new shape.
 
 ## How it is put together
 
@@ -232,8 +281,8 @@ between them is a JSON file described by a schema:
   framework's typed output.
 - **Chunks are files.** Matching state lives on disk, so a long run is resumable
   and every intermediate score is inspectable.
-- **The cache is shared.** One `jobs.db` per workspace, used by every run and
-  every project.
+- **The cache is per candidate.** One `jobs.db` under each candidate, used by
+  every run for that person, so a shared workspace never mixes their postings.
 - **Output is machine-readable.** Every command prints JSON on stdout and progress
   on stderr, so a harness never has to parse prose. The one exception is
   `jobmatch.py fit`, which prints the rendered Markdown block because showing it
@@ -245,7 +294,7 @@ Exit codes are consistent enough to branch on:
 |---|---|
 | 0 | Worked |
 | 1 | `doctor` found a failed critical check |
-| 2 | Configuration problem, for example no workspace |
+| 2 | Configuration problem, for example no workspace, an ambiguous candidate, or a browser that will not launch |
 | 3 | The work could not be completed, or a file broke its contract |
 | 4 | No LinkedIn session, or it expired mid-run |
 
@@ -254,6 +303,9 @@ Exit codes are consistent enough to branch on:
 - `uv`, which provisions each script's dependencies from its inline PEP 723 header
 - Chromium for Playwright, installed once
 - A LinkedIn account, for the first `login`
+- A stock Chrome, only if your LinkedIn account signs in through Google: Google
+  refuses OAuth from automation-flagged Chromium, so `login --channel chrome`
+  borrows a real browser for the sign-in and the shared profile keeps the cookie
 
 ## Install
 

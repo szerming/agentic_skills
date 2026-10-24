@@ -11,8 +11,10 @@ one file write.
 
 ## Before you start
 
-Read `<home>/profile.json`. If it does not exist, stop and use the
-`candidate-profile` skill first.
+Read `<candidate>/profile.json`, where `<candidate>` is
+`<home>/candidates/<name>`. If it does not exist, stop and use the
+`candidate-profile` skill first. If the workspace holds more than one candidate,
+pass `--candidate <name>`.
 
 If a command ever reports that no workspace is configured, ask the user where
 state should live (default `./resource`) and run

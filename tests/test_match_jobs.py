@@ -143,4 +143,4 @@ def test_fit_rejects_an_invalid_result(tmp_path) -> None:
 def test_schema_is_available_without_a_workspace(capsys) -> None:
     invoke("schema", "--name", "match-batch")
     payload = json.loads(capsys.readouterr().out)
-    assert payload["schema"]["title"] == "MatchChunk"
+    assert payload["title"] == "MatchChunk"

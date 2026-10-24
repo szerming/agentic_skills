@@ -15,17 +15,30 @@ Every command prints JSON on stdout. Exit codes: 0 ok, 2 configuration problem,
 
 from __future__ import annotations
 
+import sys
+
+# The skills are installed read-only in some harnesses; importing the sibling
+# modules must not drop __pycache__ inside the skill directory.
+sys.dont_write_bytecode = True
+
 import argparse
 import sys
 from pathlib import Path
 
 from job_models import CandidateProfile
 from job_workspace import (
+    EXIT_CONFIG,
+    Workspace,
+    WorkspaceError,
     add_common_arguments,
     add_init_subcommand,
     emit,
     fail,
+    resolve_home,
+    resolve_workspace,
+    slugify,
     workspace_from_args,
+    write_config,
 )
 from pydantic import ValidationError
 
@@ -73,31 +86,111 @@ def run_text(args) -> dict:
         fail(f"{pdf} does not exist.", code=EXIT_TASK_FAILED)
 
     try:
-        text, pages = extract_pdf_text(pdf)
+        stored = workspace.store_cv(pdf)
+    except WorkspaceError as exc:
+        fail(
+            str(exc),
+            code=EXIT_TASK_FAILED,
+            fix=f"Drop the CV in {workspace.cv_dir} and re-run, or pass a PDF/DOCX/TXT path.",
+        )
+
+    try:
+        if stored.suffix.lower() in {".txt", ".md"}:
+            text, pages = stored.read_text(encoding="utf-8", errors="replace"), 0
+        else:
+            text, pages = extract_pdf_text(stored)
     except Exception as exc:  # noqa: BLE001 - pypdf raises a zoo of exception types
-        fail(f"Could not read {pdf}: {exc}", code=EXIT_TASK_FAILED)
+        fail(f"Could not read {stored}: {exc}", code=EXIT_TASK_FAILED)
 
     if not text.strip():
         fail(
-            f"{pdf} produced no text. It may be a scanned PDF.",
+            f"{stored} produced no text. It may be a scanned PDF.",
             code=EXIT_TASK_FAILED,
-            fix="OCR the PDF first, or write the CV text to a .txt file by hand.",
+            fix="OCR the PDF first, or drop a text version in " + str(workspace.cv_dir),
         )
 
     if args.max_chars and len(text) > args.max_chars:
         text = text[: args.max_chars]
 
-    out = Path(args.out).expanduser() if args.out else workspace.home / "cv.txt"
+    out = Path(args.out).expanduser() if args.out else workspace.cv_text
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text + "\n", encoding="utf-8")
 
     return {
         "ok": True,
+        "candidate": workspace.candidate,
+        "candidate_dir": str(workspace.candidate_dir),
         "pdf": str(pdf),
+        "stored": str(stored),
         "out": str(out),
         "pages": pages,
         "chars": len(text),
         "preview": text[:PREVIEW_CHARS],
+    }
+
+
+def run_candidate(args) -> dict:
+    """Find or prepare the candidate folder, then say what is still missing."""
+    try:
+        home = resolve_home(getattr(args, "home", None))
+        if args.candidate:
+            workspace = Workspace(home, slugify(args.candidate)).ensure()
+        else:
+            workspace = resolve_workspace(home).ensure()
+    except WorkspaceError as exc:
+        fail(
+            str(exc),
+            code=EXIT_CONFIG,
+            fix="Pass --candidate <name>, or run init --home <path> --candidate <name>.",
+        )
+
+    stored = None
+    if args.cv:
+        try:
+            stored = workspace.store_cv(args.cv)
+        except WorkspaceError as exc:
+            fail(str(exc), code=EXIT_TASK_FAILED, fix=f"Drop the CV in {workspace.cv_dir}")
+
+    config_path = None
+    if workspace.candidate and not args.no_config:
+        config_path = write_config(home, candidate=workspace.candidate)
+
+    cvs = workspace.cvs
+    if workspace.candidate is None and not cvs:
+        nxt = {
+            "action": "create_candidate",
+            "command": f"jobprofile.py candidate --candidate <name> --home {home}",
+            "say": "No candidate folder yet. Name the candidate, then supply the CV.",
+        }
+    elif not cvs:
+        nxt = {
+            "action": "drop_cv",
+            "path": str(workspace.cv_dir),
+            "say": f"Drop the CV in {workspace.cv_dir}, or pass --cv <path> to copy it there.",
+        }
+    elif not workspace.profile.is_file():
+        nxt = {
+            "action": "extract_profile",
+            "cv": str(cvs[0]),
+            "command": f"jobprofile.py text --pdf {cvs[0]} --home {home}"
+            + (f" --candidate {workspace.candidate}" if workspace.candidate else ""),
+        }
+    else:
+        nxt = {"action": "ready", "profile": str(workspace.profile)}
+
+    return {
+        "ok": True,
+        "home": str(home),
+        "candidate": workspace.candidate,
+        "candidate_dir": str(workspace.candidate_dir),
+        "cv_dir": str(workspace.cv_dir),
+        "cvs": [str(path) for path in cvs],
+        "stored_cv": str(stored) if stored else None,
+        "profile": workspace.profile.is_file(),
+        "search_terms": workspace.search_terms.is_file(),
+        "database": workspace.db.is_file(),
+        "config": str(config_path) if config_path else None,
+        "next": nxt,
     }
 
 
@@ -124,7 +217,7 @@ def run_validate(args) -> dict:
 
 
 def run_schema(_args) -> dict:
-    return {"ok": True, "schema": CandidateProfile.model_json_schema()}
+    return CandidateProfile.model_json_schema()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -141,9 +234,18 @@ def build_parser() -> argparse.ArgumentParser:
         add_common_arguments(sub)
         return sub
 
+    candidate = add("candidate", "Find or prepare a candidate folder; copy in a CV.")
+    candidate.add_argument("--cv", default=None, help="CV to copy into <candidate>/cv.")
+    candidate.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Do not record the candidate in .jobsearch/config.json.",
+    )
+    candidate.set_defaults(handler=run_candidate)
+
     text = add("text", "Extract plain text from a CV PDF.")
     text.add_argument("--pdf", required=True)
-    text.add_argument("--out", default=None, help="Defaults to <home>/cv.txt")
+    text.add_argument("--out", default=None, help="Defaults to <candidate>/cv.txt")
     text.add_argument("--max-chars", type=int, default=120_000)
     text.set_defaults(handler=run_text)
 

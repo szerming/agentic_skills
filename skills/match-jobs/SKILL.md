@@ -19,9 +19,12 @@ Paths below are relative to this skill's directory. Resolve that directory first
 
 Two inputs are required:
 
-- `<home>/profile.json`, produced by the `candidate-profile` skill
+- `<candidate>/profile.json`, produced by the `candidate-profile` skill
 - a run directory from the `job-search` skill, containing
   `descriptions.json` (and ideally `run.json`)
+
+`<candidate>` is `<home>/candidates/<name>`. If the workspace has more than one
+candidate and none is configured, pass `--candidate <name>`.
 
 If a command reports that no workspace is configured, ask the user where state
 should live (default `./resource`) and run `init --home <path>`.
@@ -106,7 +109,7 @@ It writes:
 | Path | Contents |
 |---|---|
 | `<run-dir>/report.md` | The Match Report, sorted by score, above the threshold |
-| `<run-dir>/matches.all.json` | **Every** scored job, including the ones below the threshold |
+| `<run-dir>/matches.all.json` | **Every** scored job, including the ones below the threshold, plus the band counts |
 
 It refuses to render while any chunk is unscored or inconsistent, and names the
 chunks that need work. That refusal is the resume mechanism: fix the named

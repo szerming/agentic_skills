@@ -18,6 +18,12 @@ Every command prints JSON on stdout. Progress goes to stderr. Exit codes:
 
 from __future__ import annotations
 
+import sys
+
+# The skills are installed read-only in some harnesses; importing the sibling
+# modules must not drop __pycache__ inside the skill directory.
+sys.dont_write_bytecode = True
+
 import argparse
 import hashlib
 import json
@@ -190,24 +196,55 @@ def browser_config(args, workspace: Workspace):
         seniority_levels=tuple(args.seniority) if args.seniority else (4, 5, 6),
         workplace_types=tuple(args.workplace) if args.workplace else (1, 2, 3),
         delay=args.delay,
+        channel=getattr(args, "channel", None),
+        executable_path=getattr(args, "executable_path", None),
     )
 
 
-def chromium_installed() -> tuple[bool, str]:
-    """Look for a Playwright-managed Chromium without launching a browser."""
-    import os
+def add_browser_arguments(parser) -> None:
+    """Browser identity flags, for hosts where Google blocks Playwright Chromium."""
+    parser.add_argument(
+        "--channel",
+        default=None,
+        help="Browser channel, e.g. chrome. Use when Google refuses sign-in in Chromium.",
+    )
+    parser.add_argument(
+        "--executable-path",
+        default=None,
+        help="Path to a Chrome/Chromium binary installed outside Playwright's cache.",
+    )
 
-    roots = [
-        Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")).expanduser()
-        if os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-        else None,
-        Path.home() / ".cache" / "ms-playwright",
-        Path.home() / "Library" / "Caches" / "ms-playwright",
-    ]
-    for root in filter(None, roots):
-        if root.is_dir() and any(root.glob("chromium-*")):
-            return True, str(root)
-    return False, "no chromium-* directory found under ~/.cache/ms-playwright"
+
+def chromium_installed(
+    executable_path: str | None = None, channel: str | None = None
+) -> tuple[bool, str]:
+    """Check the browser Playwright will actually launch.
+
+    A chromium-* directory is not enough: the installed build must match the
+    Playwright version the script resolves, or launch fails with "Executable
+    doesn't exist".
+    """
+    if executable_path:
+        exe = Path(executable_path).expanduser()
+        return (True, str(exe)) if exe.is_file() else (False, f"{exe} does not exist")
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:  # noqa: BLE001
+        return False, f"playwright is not importable: {exc}"
+
+    try:
+        with sync_playwright() as playwright:
+            resolved = Path(playwright.chromium.executable_path)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"could not resolve the browser: {exc}"
+
+    if channel:
+        # Non-default channels are resolved at launch; report the intent plainly.
+        return True, f"{resolved} (channel={channel})"
+    if resolved.is_file():
+        return True, str(resolved)
+    return False, f"missing {resolved}"
 
 
 # -- commands ----------------------------------------------------------------
@@ -237,6 +274,7 @@ async def run_collect(args) -> dict:
         query = "recommended"
 
     run_dir = workspace.run_dir(args.run) if args.run else workspace.new_run()
+    created_run = args.run is None
     run_dir.mkdir(parents=True, exist_ok=True)
     descriptions_path = Path(args.out).expanduser() if args.out else run_dir / "descriptions.json"
 
@@ -293,7 +331,23 @@ async def run_collect(args) -> dict:
                 await _sleep(args.delay)
 
     except SessionExpired as exc:
+        _discard_empty_run(run_dir, created_run)
         fail(str(exc), code=EXIT_SESSION, fix="jobsearch.py login")
+    except Exception as exc:  # noqa: BLE001 - report, do not dump a traceback
+        _discard_empty_run(run_dir, created_run)
+        text = str(exc).lower()
+        if "executable" in text or "playwright install" in text or "channel" in text:
+            fail(
+                f"Could not launch a browser: {exc}",
+                code=EXIT_CONFIG,
+                fix="Run: uv run --with playwright playwright install chromium, or pass "
+                "--channel chrome / --executable-path <chrome>.",
+            )
+        fail(
+            f"Run failed: {type(exc).__name__}: {exc}",
+            code=EXIT_TASK_FAILED,
+            fix="Run doctor to check the workspace, browser and session, then retry.",
+        )
 
     payload = JobDescriptionList(jobs=jobs)
     write_json(descriptions_path, payload.model_dump(mode="json"))
@@ -334,6 +388,17 @@ async def run_collect(args) -> dict:
     }
 
 
+def _discard_empty_run(run_dir: Path, created: bool) -> None:
+    """A run that never produced output should not leave a timestamped empty dir."""
+    if not created:
+        return
+    try:
+        if run_dir.is_dir() and not any(run_dir.iterdir()):
+            run_dir.rmdir()
+    except OSError:
+        pass
+
+
 async def _sleep(seconds: float) -> None:
     import asyncio
 
@@ -356,6 +421,12 @@ async def run_describe(args) -> dict:
             description, error = await browser.get_description(entry, save_html=html_path)
     except SessionExpired as exc:
         fail(str(exc), code=EXIT_SESSION, fix="jobsearch.py login")
+    except Exception as exc:  # noqa: BLE001 - report, do not dump a traceback
+        fail(
+            f"Could not start the browser: {type(exc).__name__}: {exc}",
+            code=EXIT_CONFIG,
+            fix="Run doctor, or pass --channel chrome / --executable-path <chrome>.",
+        )
 
     if error:
         fail(
@@ -393,13 +464,28 @@ def run_login(args) -> dict:
     try:
         success = asyncio.run(login())
     except Exception as exc:  # noqa: BLE001
-        fail(f"Login failed to start: {exc}", code=EXIT_SESSION)
+        text = str(exc).lower()
+        if "executable" in text or "playwright install" in text or "channel" in text:
+            fail(
+                f"Could not launch a browser: {exc}",
+                code=EXIT_CONFIG,
+                fix="Run: uv run --with playwright playwright install chromium, or pass "
+                "--channel chrome / --executable-path <chrome>.",
+            )
+        if "closed" in text:
+            fail(
+                "The browser window closed before sign-in completed.",
+                code=EXIT_SESSION,
+                fix="Re-run login and leave the window open until it closes itself.",
+            )
+        fail(f"Login failed to start: {exc}", code=EXIT_CONFIG, fix="Re-run login.")
 
     if not success:
         fail(
             "Timed out before a LinkedIn session appeared.",
             code=EXIT_SESSION,
-            fix="Re-run login and finish the sign-in (and any 2FA) in the browser window.",
+            fix="Re-run login and finish the sign-in (and any 2FA) in the browser window. "
+            "If Google says the browser is not secure, re-run with --channel chrome.",
         )
     return {"ok": True, "session": str(workspace.session)}
 
@@ -407,7 +493,7 @@ def run_login(args) -> dict:
 def run_doctor(args) -> dict:
     import asyncio
 
-    from job_workspace import WorkspaceError, resolve_home
+    from job_workspace import WorkspaceError, resolve_home, resolve_workspace
 
     checks: dict[str, dict] = {}
 
@@ -420,7 +506,7 @@ def run_doctor(args) -> dict:
     workspace: Workspace | None = None
     try:
         home = resolve_home(args.home)
-        workspace = Workspace(home).ensure()
+        workspace = resolve_workspace(home, getattr(args, "candidate", None)).ensure()
         record("workspace", True, str(home))
         probe = workspace.home / ".write-probe"
         probe.write_text("ok", encoding="utf-8")
@@ -431,10 +517,27 @@ def run_doctor(args) -> dict:
     except OSError as exc:
         record("workspace_writable", False, str(exc), "Choose a writable --home")
 
-    installed, where = chromium_installed()
-    record("chromium", installed, where, "uv run --with playwright playwright install chromium")
+    installed, where = chromium_installed(
+        getattr(args, "executable_path", None), getattr(args, "channel", None)
+    )
+    record(
+        "chromium",
+        installed,
+        where,
+        "uv run --with playwright playwright install chromium, or pass "
+        "--channel chrome / --executable-path <chrome>",
+    )
 
     if workspace is not None:
+        record(
+            "candidate",
+            workspace.candidate is not None or workspace.profile.is_file(),
+            workspace.candidate
+            if workspace.candidate
+            else f"flat layout at {workspace.home}",
+            "jobprofile.py candidate --candidate <name> --cv <path>",
+            critical=False,
+        )
         session_files = len(list(workspace.session.rglob("*"))) if workspace.session.is_dir() else 0
         record(
             "session_dir",
@@ -523,7 +626,7 @@ def run_schema(args) -> dict:
     if args.name:
         if args.name not in schemas:
             fail(f"Unknown schema {args.name!r}; choose from {sorted(schemas)}", code=EXIT_CONFIG)
-        return {"ok": True, "schema": schemas[args.name]}
+        return schemas[args.name]
     return {"ok": True, "schemas": schemas}
 
 
@@ -545,6 +648,7 @@ def build_parser() -> argparse.ArgumentParser:
         return sub
 
     collect = add("collect", "Search LinkedIn and store the descriptions of every job found.")
+    add_browser_arguments(collect)
     collect.add_argument("--source", choices=["terms", "url", "recommended"], default="terms")
     collect.add_argument("--terms-file", default=None, help="Defaults to <home>/search_terms.json")
     collect.add_argument("--url", default=None, help="Listing URL, for --source url")
@@ -575,6 +679,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect.set_defaults(handler=_async(run_collect))
 
     describe = add("describe", "Fetch one posting. For debugging selectors.")
+    add_browser_arguments(describe)
     describe.add_argument("--url", required=True)
     describe.add_argument("--out", default=None)
     describe.add_argument("--save-html", default=None)
@@ -587,6 +692,7 @@ def build_parser() -> argparse.ArgumentParser:
     describe.set_defaults(handler=_async(run_describe))
 
     login = add("login", "Open a browser and wait for the user to sign in to LinkedIn.")
+    add_browser_arguments(login)
     login.add_argument("--timeout", type=int, default=600)
     login.add_argument("--headless", action="store_true")
     login.add_argument("--delay", type=float, default=1.0)
@@ -597,6 +703,7 @@ def build_parser() -> argparse.ArgumentParser:
     login.set_defaults(handler=run_login)
 
     doctor = add("doctor", "Check workspace, chromium, session, terms, profile and cache.")
+    add_browser_arguments(doctor)
     doctor.add_argument(
         "--deep", action="store_true", help="Launch a headless browser to verify the cookie."
     )

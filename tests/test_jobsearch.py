@@ -77,3 +77,74 @@ def test_store_round_trip_and_prune(tmp_path) -> None:
     assert store.count() == 1
     assert store.prune(older_than_days=0) == 1
     assert store.count() == 0
+
+
+# -- candidate layout --------------------------------------------------------
+
+
+def test_candidate_layout_scopes_candidate_state(tmp_path) -> None:
+    from job_workspace import Workspace
+
+    home = tmp_path / "resource"
+    workspace = Workspace(home, "alice").ensure()
+
+    assert workspace.candidate_dir == home / "candidates" / "alice"
+    assert workspace.cv_dir == home / "candidates" / "alice" / "cv"
+    assert workspace.profile == home / "candidates" / "alice" / "profile.json"
+    assert workspace.search_terms == home / "candidates" / "alice" / "search_terms.json"
+    assert workspace.db == home / "candidates" / "alice" / "jobs.db"
+    assert workspace.runs == home / "candidates" / "alice" / "runs"
+    # The LinkedIn session is account-level, not candidate-level.
+    assert workspace.session == home / "session"
+
+
+def test_store_cv_copies_into_the_candidate_without_duplicating(tmp_path) -> None:
+    from job_workspace import Workspace
+
+    workspace = Workspace(tmp_path / "resource", "alice").ensure()
+    source = tmp_path / "cv.pdf"
+    source.write_bytes(b"%PDF-1.4 candidate")
+
+    stored = workspace.store_cv(source)
+    assert stored == workspace.cv_dir / "cv.pdf"
+    assert stored.read_bytes() == b"%PDF-1.4 candidate"
+    assert workspace.store_cv(source) == stored, "a re-run must not create cv-2.pdf"
+    assert [path.name for path in workspace.cvs] == ["cv.pdf"]
+
+
+def test_single_candidate_is_discovered(tmp_path) -> None:
+    from job_workspace import Workspace, resolve_workspace
+
+    home = tmp_path / "resource"
+    Workspace(home, "bob").ensure()
+    assert resolve_workspace(home).candidate == "bob"
+
+
+def test_two_candidates_require_an_explicit_choice(tmp_path) -> None:
+    from job_workspace import Workspace, WorkspaceError, resolve_workspace
+
+    home = tmp_path / "resource"
+    Workspace(home, "alice").ensure()
+    Workspace(home, "bob").ensure()
+    with pytest.raises(WorkspaceError):
+        resolve_workspace(home)
+    assert resolve_workspace(home, "bob").candidate == "bob"
+
+
+def test_flat_layout_is_still_honoured(tmp_path) -> None:
+    from job_workspace import resolve_workspace
+
+    home = tmp_path / "resource"
+    home.mkdir()
+    (home / "profile.json").write_text("{}", encoding="utf-8")
+    workspace = resolve_workspace(home)
+    assert workspace.candidate is None
+    assert workspace.profile == home / "profile.json"
+    assert workspace.db == home / "jobs.db"
+
+
+def test_candidate_name_is_slugified(tmp_path) -> None:
+    from job_workspace import Workspace, slugify
+
+    assert slugify("Alex Mercer") == "alex-mercer"
+    assert Workspace(tmp_path, "Alex Mercer").candidate_dir.name == "alex-mercer"

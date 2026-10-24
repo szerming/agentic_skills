@@ -19,6 +19,12 @@ Markdown for one job. Exit codes:
 
 from __future__ import annotations
 
+import sys
+
+# The skills are installed read-only in some harnesses; importing the sibling
+# modules must not drop __pycache__ inside the skill directory.
+sys.dont_write_bytecode = True
+
 import argparse
 import json
 import sys
@@ -122,7 +128,12 @@ def chunk_state(run: Path, envelope: ChunkEnvelope) -> tuple[str, str | None]:
     produced = {result.url for result in match_chunk.match_results}
 
     if missing := expected - produced:
-        return "invalid", f"{len(missing)} job(s) not scored"
+        titles = {job.url: job.title for job in envelope.jobs}
+        named = [f"{titles[url]!r} ({url})" for url in sorted(missing)]
+        shown = "; ".join(named[:3])
+        if len(named) > 3:
+            shown += f"; and {len(named) - 3} more"
+        return "invalid", f"{len(missing)} job(s) not scored: {shown}"
     if extra := produced - expected:
         return "invalid", f"{len(extra)} result(s) for jobs not in this chunk"
     if len(produced) != len(match_chunk.match_results):
@@ -202,7 +213,7 @@ def run_report(args) -> dict:
 
     if pending:
         fail(
-            f"{len(pending)} of {len(envelopes)} chunk(s) are not scored.",
+            f"{len(pending)} of {len(envelopes)} chunk(s) are not ready to render.",
             code=EXIT_TASK_FAILED,
             pending=pending,
             run=str(run),
@@ -218,7 +229,8 @@ def run_report(args) -> dict:
         )
 
     ordered = sorted(scored, key=lambda result: result.match_score, reverse=True)
-    output = MatcherOutput(match_results=ordered)
+    bands = _bands(ordered)
+    output = MatcherOutput(match_results=ordered, bands=bands)
     write_json(run / "matches.all.json", output.model_dump(mode="json"))
 
     reported = [result for result in ordered if result.match_score >= args.min_score]
@@ -247,7 +259,7 @@ def run_report(args) -> dict:
         "scored": len(ordered),
         "reported": len(reported),
         "min_score": args.min_score,
-        "bands": _bands(ordered),
+        "bands": bands,
     }
 
 
@@ -345,7 +357,7 @@ def run_schema(args) -> dict:
     if args.name:
         if args.name not in schemas:
             fail(f"Unknown schema {args.name!r}; choose from {sorted(schemas)}", code=EXIT_CONFIG)
-        return {"ok": True, "schema": schemas[args.name]}
+        return schemas[args.name]
     return {"ok": True, "schemas": schemas}
 
 

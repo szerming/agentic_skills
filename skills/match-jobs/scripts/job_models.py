@@ -33,8 +33,9 @@ class EducationItem(BaseModel):
     qualification_achieved: str
     summary: str = ""
     skills_learned: list[str] = Field(default_factory=list)
-    start_year: int
-    end_year: int
+    # CVs often omit degree dates. Leave them optional rather than inventing them.
+    start_year: int | None = None
+    end_year: int | None = None
 
 
 class CandidateProfile(BaseModel):
@@ -174,6 +175,10 @@ class MatcherOutput(BaseModel):
     """The aggregate Match Report: every score, sorted at render time."""
 
     match_results: list[MatchResult] = Field(default_factory=list)
+    bands: dict[str, int] = Field(
+        default_factory=dict,
+        description="How many scored jobs fall in each score band.",
+    )
 
     def to_markdown(self, extra: str = "") -> str:
         """Aggregates all match results into a single Markdown report."""

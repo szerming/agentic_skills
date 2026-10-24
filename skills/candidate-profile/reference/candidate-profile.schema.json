@@ -29,19 +29,33 @@
           "type": "array"
         },
         "start_year": {
-          "title": "Start Year",
-          "type": "integer"
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Year"
         },
         "end_year": {
-          "title": "End Year",
-          "type": "integer"
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Year"
         }
       },
       "required": [
         "school",
-        "qualification_achieved",
-        "start_year",
-        "end_year"
+        "qualification_achieved"
       ],
       "title": "EducationItem",
       "type": "object"

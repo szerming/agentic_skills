@@ -11,7 +11,41 @@ tokens are spent re-reading the same CV.
 
 Paths below are relative to this skill's directory. Resolve that directory first.
 
-## Step 1: resolve the workspace
+## Step 1: find the candidate folder
+
+Everything about a candidate lives in one folder under the workspace:
+
+```
+<home>/candidates/<candidate>/
+  cv/            the original CV, exactly as supplied
+  cv.txt         text extracted from it
+  profile.json   the Candidate Profile
+  search_terms.json
+  jobs.db        this candidate's description cache
+  runs/
+```
+
+Ask the script what it can already see:
+
+```
+uv run scripts/jobprofile.py candidate
+```
+
+- **`next.action` is `ready`** — the folder, CV and profile all exist. Skip to
+  Step 6.
+- **`next.action` is `drop_cv`** — the folder exists but there is no CV. Ask the
+  user to put the CV in `cv_dir`, or pass their path to
+  `candidate --cv <path>`, which copies it in.
+- **`next.action` is `create_candidate`** — no candidate yet. Run
+  `candidate --candidate <name> --cv <path>`. The name is slugified
+  (`Alex Mercer` → `alex-mercer`) and recorded in
+  `.jobsearch/config.json`, so later runs find it without a flag.
+- **More than one candidate and none selected** — the command fails with exit 2.
+  Pass `--candidate <name>`; do not guess.
+
+Never take the CV from, or copy it into, the skill's own directory.
+
+## Step 2: resolve the workspace
 
 If a command reports that no workspace is configured, ask the user where state
 should live, suggesting `./resource` in the current directory, then:
@@ -22,20 +56,25 @@ uv run scripts/jobprofile.py init --home <path>
 
 If the user is in a git repo, tell them to add `.jobsearch/` to `.gitignore`.
 
-## Step 2: extract the text
+## Step 3: extract the text
 
 ```
 uv run scripts/jobprofile.py text --pdf /path/to/cv.pdf
 ```
 
-This writes `<home>/cv.txt` and prints its path, page count, character count and a
-short preview. Then **read `<home>/cv.txt` in full**. Do not work from the
+This copies the CV into `<candidate>/cv/` (if it is not already there), writes
+`<candidate>/cv.txt`, and prints the path, page count, character count and a
+short preview. Then **read `<candidate>/cv.txt` in full**. Do not work from the
 preview.
+
+If the user hands you a path outside the workspace, pass it here rather than
+copying it by hand: the script puts it in the right folder and keeps the
+original filename.
 
 If it fails because the PDF produced no text, it is a scan. Say so, and offer to
 work from a text version the user provides instead. Do not guess at the contents.
 
-## Step 3: build the profile
+## Step 4: build the profile
 
 Print the target shape once:
 
@@ -70,7 +109,7 @@ If `<home>/profile.json` already exists, summarise what changed before
 overwriting, and ask. A profile the user has hand-edited is worth more than a
 fresh extraction.
 
-## Step 4: validate
+## Step 5: validate
 
 ```
 uv run scripts/jobprofile.py validate --in <home>/profile.json
@@ -79,7 +118,7 @@ uv run scripts/jobprofile.py validate --in <home>/profile.json
 Fix what it reports and run it again. Do not hand the user a profile that has not
 passed this check.
 
-## Step 5: hand over
+## Step 6: hand over
 
 Report:
 
