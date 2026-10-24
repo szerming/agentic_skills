@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
 # Local state written by the job-search skills
 .jobsearch/
 resource/

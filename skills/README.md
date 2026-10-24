@@ -7,14 +7,17 @@ server, no plugin API, no agent framework.
 ## The pipeline
 
 ```
-candidate-profile      CV PDF              -> <home>/profile.json
+candidate-profile      CV PDF              -> <candidate>/cv/ + <candidate>/profile.json
         |
-job-search-terms       profile            -> <home>/search_terms.json
+job-search-terms       profile             -> <candidate>/search_terms.json
         |
-job-search             terms              -> <run>/descriptions.json  (+ <home>/jobs.db cache)
+job-search             terms               -> <run>/descriptions.json  (+ <candidate>/jobs.db cache)
         |
-match-jobs             profile + run      -> <run>/matches/*.json -> <run>/report.md
+match-jobs             profile + run       -> <run>/matches/*.json -> <run>/report.md
 ```
+
+`<candidate>` is `<home>/candidates/<name>`: one folder per person, holding their
+CV, profile, terms, cache and runs.
 
 Run them out of order and the scripts refuse, naming what is missing.
 
@@ -54,19 +57,27 @@ read-only harness install. All state lives in a workspace, resolved in this orde
 
 ```
 <home>/
-├── profile.json
-├── search_terms.json
-├── cv.txt
-├── jobs.db                    # description cache, keyed by job URL
-├── session/                   # persistent Chromium profile, never commit
-└── runs/<timestamp>/
-    ├── descriptions.json
-    ├── run.json
-    ├── chunks/chunk-NN.json
-    ├── matches/chunk-NN.json
-    ├── matches.all.json
-    └── report.md
+├── session/                       # persistent Chromium profile, never commit
+└── candidates/<name>/
+    ├── cv/                        # the original CV
+    ├── cv.txt                     # text extracted from it
+    ├── profile.json
+    ├── search_terms.json
+    ├── jobs.db                    # description cache, keyed by job URL
+    └── runs/<timestamp>/
+        ├── descriptions.json
+        ├── run.json
+        ├── chunks/chunk-NN.json
+        ├── matches/chunk-NN.json
+        ├── matches.all.json       # every score, plus band counts
+        └── report.md
 ```
+
+The cache and runs are per candidate, so one workspace can hold several people
+without mixing their postings. The session is account-level and stays at the
+workspace root. A candidate is selected with `--candidate`, `$JOBSEARCH_CANDIDATE`
+or the `candidate` key in `.jobsearch/config.json`; with exactly one candidate
+folder it is found automatically.
 
 ## Installing
 
