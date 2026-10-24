@@ -15,7 +15,7 @@ framework to install.
 | [candidate-profile](./skills/candidate-profile/SKILL.md) | A reusable `CandidateProfile` JSON extracted from a CV | a CV PDF | `jobprofile.py` (pypdf) |
 | [job-search-terms](./skills/job-search-terms/SKILL.md) | Search terms and a location that fit that profile | a profile | none, pure judgement |
 | [job-search](./skills/job-search/SKILL.md) | Job Descriptions from LinkedIn, with a cache so repeat runs refetch nothing | search terms, a LinkedIn session | `jobsearch.py` (Playwright) |
-| [match-jobs](./skills/match-jobs/SKILL.md) | Scores, reasoning and a ranked Markdown Match Report | a profile and a run | `jobmatch.py` (pydantic) |
+| [match-jobs](./skills/match-jobs/SKILL.md) | Scores, a ranked Markdown Match Report, and lookup of what was already saved | a profile and a run | `jobmatch.py` (pydantic) |
 
 The four compose into one pipeline. Run them out of order and the scripts refuse,
 naming the skill that produces what is missing.
@@ -27,7 +27,7 @@ job-search-terms       profile         -> <candidate>/search_terms.json
         |
 job-search             terms           -> <run>/descriptions.json   (+ <candidate>/jobs.db)
         |
-match-jobs             profile + run   -> <run>/matches/*.json -> <run>/report.md
+match-jobs             profile + run   -> <run>/matches/*.json -> <run>/report.md (+ scores in jobs.db)
 ```
 
 `<candidate>` is `<home>/candidates/<name>`: one folder per person, holding their
@@ -176,6 +176,10 @@ What it can do:
 - count results by score band, and persist those counts alongside the scores, so
   the shape of the run is visible at a glance
 - score a single pasted job with `fit`, without creating a run
+- remember every score in the candidate's `jobs.db`, keyed by job URL, and answer
+  "what did this score?" or "which jobs have I saved?" with `lookup`, without
+  re-scoring or walking the run directories. Collected-but-unscored postings are
+  listed too, so the gap between found and scored is visible
 
 The rubric it follows weights skills at 40%, experience relevance at 20%, domain
 alignment and seniority at 15% each, and tools at 10%, with bands from excellent
@@ -186,11 +190,15 @@ like any other document.
 uv run skills/match-jobs/scripts/jobmatch.py prepare --run resource/candidates/alex/runs/<stamp>
 uv run skills/match-jobs/scripts/jobmatch.py report --run resource/candidates/alex/runs/<stamp>
 uv run skills/match-jobs/scripts/jobmatch.py fit --match /tmp/one-match.json
+uv run skills/match-jobs/scripts/jobmatch.py lookup --query "architect" --min-score 75
 ```
 
 What it produces: `chunks/`, `matches/`, `matches.all.json` and `report.md`, all
-inside the run directory. The report lists each job with score, location, salary,
-domain, link, reasoning, strengths, gaps and a collapsible full description.
+inside the run directory, plus a `match_results` table in `<candidate>/jobs.db`.
+The report lists each job with score, location, salary, domain, link, reasoning,
+strengths, gaps and a collapsible full description. `lookup` reads that database
+only: `matches` are saved scores, `unscored` are descriptions collected by
+job-search that have never been scored.
 
 ## What one run looks like
 
@@ -248,7 +256,7 @@ Within a workspace, the candidate is resolved independently:
     ├── cv.txt                     text extracted from it
     ├── profile.json               the Candidate Profile
     ├── search_terms.json          the Search Terms
-    ├── jobs.db                    description cache, keyed by job URL
+    ├── jobs.db                    description cache + saved match scores
     └── runs/<timestamp>/
         ├── descriptions.json      the run's input
         ├── run.json               provenance: source, terms, counts, hash
@@ -283,6 +291,8 @@ between them is a JSON file described by a schema:
   and every intermediate score is inspectable.
 - **The cache is per candidate.** One `jobs.db` under each candidate, used by
   every run for that person, so a shared workspace never mixes their postings.
+  It holds both caches: descriptions from job-search and scores from match-jobs,
+  which is why "what have I already seen, and what did it score?" is one query.
 - **Output is machine-readable.** Every command prints JSON on stdout and progress
   on stderr, so a harness never has to parse prose. The one exception is
   `jobmatch.py fit`, which prints the rendered Markdown block because showing it

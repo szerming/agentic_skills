@@ -13,7 +13,7 @@ job-search-terms       profile             -> <candidate>/search_terms.json
         |
 job-search             terms               -> <run>/descriptions.json  (+ <candidate>/jobs.db cache)
         |
-match-jobs             profile + run       -> <run>/matches/*.json -> <run>/report.md
+match-jobs             profile + run       -> <run>/matches/*.json -> <run>/report.md (+ scores in jobs.db)
 ```
 
 `<candidate>` is `<home>/candidates/<name>`: one folder per person, holding their
@@ -28,7 +28,7 @@ Run them out of order and the scripts refuse, naming what is missing.
 | [candidate-profile](./candidate-profile/SKILL.md) | a CV PDF | `profile.json` | `jobprofile.py` (pypdf) |
 | [job-search-terms](./job-search-terms/SKILL.md) | `profile.json` | `search_terms.json` | none |
 | [job-search](./job-search/SKILL.md) | `search_terms.json`, a LinkedIn session | `descriptions.json`, cache | `jobsearch.py` (playwright) |
-| [match-jobs](./match-jobs/SKILL.md) | `profile.json`, a run | `matches/*.json`, `report.md` | `jobmatch.py` (pydantic) |
+| [match-jobs](./match-jobs/SKILL.md) | `profile.json`, a run | `matches/*.json`, `report.md`, saved scores | `jobmatch.py` (pydantic) |
 
 `job-search` is deliberately the only skill that touches a browser, and the only
 one with a heavy dependency. `job-search-terms` has no scripts at all: it is pure
@@ -63,7 +63,7 @@ read-only harness install. All state lives in a workspace, resolved in this orde
     ├── cv.txt                     # text extracted from it
     ├── profile.json
     ├── search_terms.json
-    ├── jobs.db                    # description cache, keyed by job URL
+    ├── jobs.db                    # description cache + saved match scores
     └── runs/<timestamp>/
         ├── descriptions.json
         ├── run.json

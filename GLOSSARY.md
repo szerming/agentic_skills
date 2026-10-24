@@ -60,6 +60,12 @@ The Markdown document aggregating Match Results, sorted by score, produced once
 per run.
 _Avoid_: Output, results
 
+**Match Store**:
+The `match_results` table in the candidate's `jobs.db`, keyed by job URL, holding
+the latest Match Result for every job ever scored. It outlives the Run that
+produced it; `lookup` reads it to answer questions about existing jobs.
+_Avoid_: History, cache (that word means descriptions)
+
 **Chunk**:
 A batch of Job Descriptions handed to the model in a single turn, ten by default,
 so each job keeps the model's attention.
@@ -78,6 +84,7 @@ runs. Resolved from `--home`, then `$JOBSEARCH_HOME`, then
 _Avoid_: Data dir, config dir
 
 **Description cache**:
-`<workspace>/jobs.db`, an SQLite key/value store keyed by job URL. Makes repeat
-runs cheap and keeps the load on LinkedIn down.
-_Avoid_: Database, store
+The `model_store` table in `<candidate>/jobs.db`, an SQLite key/value store keyed
+by job URL in the same file as the Match Store. Makes repeat runs cheap and keeps
+the load on LinkedIn down.
+_Avoid_: Database, store (the file holds both)

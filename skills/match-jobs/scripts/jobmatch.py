@@ -3,12 +3,16 @@
 # requires-python = ">=3.12"
 # dependencies = ["pydantic>=2.12"]
 # ///
-"""Prepare, validate and render job matching runs.
+"""Prepare, validate and render job matching runs, and look up saved results.
 
 This script contains only the deterministic parts of matching: slicing a run into
-chunks, enforcing the JSON contract, merging results, and rendering the Markdown
-report. The judgement (scores, reasoning, strengths, gaps) belongs to the model
-reading reference/matching-rubric.md.
+chunks, enforcing the JSON contract, merging results, rendering the Markdown
+report, and remembering scores. The judgement (scores, reasoning, strengths,
+gaps) belongs to the model reading reference/matching-rubric.md.
+
+Scores are persisted in the candidate's `jobs.db`, next to the descriptions the
+job-search skill caches. `lookup` answers questions about jobs that have already
+been found or scored without re-reading a run or re-scoring anything.
 
 Every command prints JSON on stdout, except `fit` which prints the rendered
 Markdown for one job. Exit codes:
@@ -27,7 +31,9 @@ sys.dont_write_bytecode = True
 
 import argparse
 import json
+import sqlite3
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from job_models import (
@@ -82,6 +88,133 @@ def load_model(path: Path, model, label: str):
             code=EXIT_TASK_FAILED,
             errors=exc.errors(include_url=False),
         )
+
+
+# -- saved results -----------------------------------------------------------
+
+# job-search writes descriptions to `model_store`. Match scores get their own
+# table in the same database, so one file answers "what have we already seen?"
+# and "what did it score?". Both tables share the key/data/updated_at shape.
+MATCH_TABLE = "match_results"
+DESCRIPTION_TABLE = "model_store"
+
+
+def connect(db_path: Path):
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return sqlite3.connect(db_path)
+
+
+def ensure_match_table(db_path: Path) -> None:
+    with connect(db_path) as conn:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {MATCH_TABLE} (
+                key TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+
+def save_matches(db_path: Path, results: list[MatchResult]) -> int:
+    """Upsert one row per job URL. Returns how many rows were written."""
+    ensure_match_table(db_path)
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(db_path) as conn:
+        conn.executemany(
+            f"""
+            INSERT INTO {MATCH_TABLE} (key, data, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                data=excluded.data,
+                updated_at=excluded.updated_at
+            """,
+            [(result.url, result.model_dump_json(), now) for result in results],
+        )
+    return len(results)
+
+
+def _table_exists(conn, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).fetchone()
+    return row is not None
+
+
+def load_saved(db_path: Path) -> tuple[list[dict], list[dict]]:
+    """Read (match rows, cached-but-unscored description rows) out of jobs.db.
+
+    Rows are dicts so `lookup` can trim a full description without re-validating
+    a model. A missing database, or a database the job-search skill has not
+    written to yet, simply has nothing saved.
+    """
+    if not db_path.is_file():
+        return [], []
+
+    matches: list[dict] = []
+    descriptions: list[dict] = []
+    with connect(db_path) as conn:
+        if _table_exists(conn, MATCH_TABLE):
+            for data, updated_at in conn.execute(f"SELECT data, updated_at FROM {MATCH_TABLE}"):
+                try:
+                    matches.append({**json.loads(data), "scored_at": updated_at})
+                except json.JSONDecodeError:
+                    continue
+
+        scored = {row["url"] for row in matches}
+        if _table_exists(conn, DESCRIPTION_TABLE):
+            for data, updated_at in conn.execute(
+                f"SELECT data, updated_at FROM {DESCRIPTION_TABLE}"
+            ):
+                try:
+                    description = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if description.get("url") in scored:
+                    continue
+                descriptions.append({**description, "cached_at": updated_at})
+    return matches, descriptions
+
+
+def normalize_url(url: str) -> str:
+    """Compare job URLs without LinkedIn's tracking query string or a trailing slash."""
+    return url.split("?", 1)[0].split("#", 1)[0].rstrip("/").casefold()
+
+
+def _matches_filters(row: dict, args) -> bool:
+    if args.url:
+        wanted = normalize_url(args.url)
+        candidate = normalize_url(row.get("url", ""))
+        if wanted != candidate and wanted not in candidate:
+            return False
+    if args.query:
+        haystack = " ".join(
+            str(row.get(field, "")) for field in ("title", "company", "location", "domain")
+        ).casefold()
+        if args.query.casefold() not in haystack:
+            return False
+    return True
+
+
+def _summary(row: dict) -> dict:
+    fields = (
+        "title",
+        "url",
+        "company",
+        "location",
+        "domain",
+        "salary_range",
+        "match_score",
+        "reasoning",
+        "strengths",
+        "gaps",
+    )
+    summary = {field: row.get(field) for field in fields}
+    for field in ("scored_at", "cached_at"):
+        if field in row:
+            summary[field] = row[field]
+    return summary
 
 
 # -- run layout --------------------------------------------------------------
@@ -232,6 +365,7 @@ def run_report(args) -> dict:
     bands = _bands(ordered)
     output = MatcherOutput(match_results=ordered, bands=bands)
     write_json(run / "matches.all.json", output.model_dump(mode="json"))
+    saved = save_matches(workspace.db, ordered)
 
     reported = [result for result in ordered if result.match_score >= args.min_score]
 
@@ -256,6 +390,8 @@ def run_report(args) -> dict:
         "run": str(run),
         "report": str(report_path),
         "all_matches": str(run / "matches.all.json"),
+        "database": str(workspace.db),
+        "saved": saved,
         "scored": len(ordered),
         "reported": len(reported),
         "min_score": args.min_score,
@@ -320,12 +456,71 @@ def run_fit(args) -> dict:
     if args.out:
         write_json(Path(args.out).expanduser(), result.model_dump(mode="json"))
 
+    saved_to = None
+    if args.save:
+        workspace: Workspace = workspace_from_args(args)
+        save_matches(workspace.db, [result])
+        saved_to = str(workspace.db)
+
     if args.json:
-        return {"ok": True, "match": result.model_dump(mode="json")}
+        payload = {"ok": True, "match": result.model_dump(mode="json")}
+        if saved_to:
+            payload["database"] = saved_to
+        return payload
 
     print(result.to_markdown())
     log(f"[jobmatch] {result.title} @ {result.company}: {result.match_score}/100")
     return None
+
+
+def run_lookup(args) -> dict:
+    """Answer questions about jobs that have already been seen or scored.
+
+    Reads the candidate's jobs.db only: no run directory, no profile, no model.
+    """
+    workspace: Workspace = workspace_from_args(args)
+    matches, descriptions = load_saved(workspace.db)
+
+    filtered_matches = [
+        row
+        for row in matches
+        if _matches_filters(row, args)
+        and (args.min_score is None or row.get("match_score", 0) >= args.min_score)
+    ]
+    filtered_descriptions = [row for row in descriptions if _matches_filters(row, args)]
+
+    filtered_matches.sort(
+        key=lambda row: (row.get("match_score", 0), row.get("scored_at") or ""), reverse=True
+    )
+    filtered_descriptions.sort(key=lambda row: row.get("cached_at") or "", reverse=True)
+
+    total_matches = len(filtered_matches)
+    total_descriptions = len(filtered_descriptions)
+    limit = max(0, args.limit)
+    if limit:
+        filtered_matches = filtered_matches[:limit]
+        filtered_descriptions = filtered_descriptions[:limit]
+
+    shown_matches = [row if args.include_description else _summary(row) for row in filtered_matches]
+    shown_descriptions = [
+        row if args.include_description else _summary(row) for row in filtered_descriptions
+    ]
+
+    payload = {
+        "ok": True,
+        "database": str(workspace.db),
+        "count": len(shown_matches),
+        "total_matches": total_matches,
+        "total_descriptions": total_descriptions,
+        "matches": shown_matches,
+        "unscored": shown_descriptions,
+    }
+    if not shown_matches and not shown_descriptions:
+        payload["note"] = (
+            "Nothing saved matches that query. Collect jobs with the job-search skill "
+            "and score them with this skill; both save to jobs.db."
+        )
+    return payload
 
 
 def run_validate(args) -> dict:
@@ -367,7 +562,9 @@ def run_schema(args) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jobmatch.py",
-        description="Prepare chunks, validate scores, and render the Match Report.",
+        description=(
+            "Prepare chunks, validate scores, render the Match Report and look up saved results."
+        ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -400,7 +597,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fit.add_argument("--json", action="store_true", help="Print JSON instead of Markdown.")
     fit.add_argument("--out", default=None)
+    fit.add_argument(
+        "--save",
+        action="store_true",
+        help="Also save the result to the candidate's jobs.db for later lookup.",
+    )
     fit.set_defaults(handler=run_fit)
+
+    lookup = add("lookup", "Search saved match results and cached descriptions in jobs.db.")
+    lookup.add_argument("--url", default=None, help="A job URL, with or without tracking params.")
+    lookup.add_argument(
+        "--query", default=None, help="Case-insensitive text over title, company, location, domain."
+    )
+    lookup.add_argument(
+        "--min-score", type=int, default=None, help="Only results at or above this."
+    )
+    lookup.add_argument(
+        "--limit", type=int, default=10, help="Rows per list. Default 10; 0 means no limit."
+    )
+    lookup.add_argument(
+        "--include-description",
+        action="store_true",
+        help="Include the full posting text. Long; only when the user needs it.",
+    )
+    lookup.set_defaults(handler=run_lookup)
 
     validate = add("validate", "Check a JSON file against the contract.")
     validate.add_argument("--in", dest="input", required=True)

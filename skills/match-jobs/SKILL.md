@@ -1,6 +1,6 @@
 ---
 name: match-jobs
-description: Score collected job descriptions against a candidate profile and render a ranked Markdown Match Report. Use when the user wants to rank jobs, find their best-fitting jobs, score postings against their CV, check whether a single job is worth applying to, or regenerate a job match report.
+description: Score collected job descriptions against a candidate profile and render a ranked Markdown Match Report. Use when the user wants to rank jobs, find their best-fitting jobs, score postings against their CV, check whether a single job is worth applying to, or regenerate a job match report. Also use when the user asks about jobs already found or scored — what a posting scored, which saved jobs are worth revisiting, or whether a URL has been seen — answering from the candidate's SQLite database.
 ---
 
 # Match Jobs
@@ -31,6 +31,43 @@ should live (default `./resource`) and run `init --home <path>`.
 
 If the profile or the run is missing, stop and name the skill that produces it.
 Do not fabricate either one.
+
+## Questions about existing jobs
+
+If the user asks about jobs the pipeline has already seen — "what did that job
+score?", "which jobs did I save?", "show me the strong ones from last week", "did
+I already look at this URL?" — answer from the candidate's SQLite database. Do
+not re-score, and do not go reading run directories one by one.
+
+`jobs.db` is the candidate's record: `job-search` caches every description it
+fetches, and `report` plus `fit --save` write scores into it. Query it:
+
+```
+uv run scripts/jobmatch.py lookup --query "architect"
+uv run scripts/jobmatch.py lookup --url "<job url>"
+uv run scripts/jobmatch.py lookup --min-score 75 --limit 10
+uv run scripts/jobmatch.py lookup --query "acme" --include-description
+```
+
+What comes back:
+
+- `matches`: saved scores, best first, each with its `scored_at` timestamp.
+- `unscored`: descriptions that were collected but never scored, with
+  `cached_at`.
+- `--query` searches title, company, location and domain; `--url` ignores
+  LinkedIn's tracking parameters. `--limit` defaults to 10; `0` means no limit.
+
+Then:
+
+- If the wanted job is in `matches`, quote the saved score and reasoning. Do not
+  re-score it just to answer a question.
+- If it is in `unscored`, score it from the cached description and persist the
+  result with `fit --save`. Never invent a score for an unscored job.
+- An empty result is not an error: it means nothing has been collected yet, and
+  `note` says where to start.
+
+The database is per candidate. In a workspace with more than one, pass
+`--candidate <name>` and say which person the answer belongs to.
 
 ## Step 1: prepare the chunks
 
@@ -111,6 +148,11 @@ It writes:
 | `<run-dir>/report.md` | The Match Report, sorted by score, above the threshold |
 | `<run-dir>/matches.all.json` | **Every** scored job, including the ones below the threshold, plus the band counts |
 
+It also upserts every score into the candidate's `jobs.db` (table
+`match_results`), keyed by job URL. That is what makes `lookup` work across runs,
+and after the run directory is no longer convenient to read. The database path is
+in the command's output under `database`.
+
 It refuses to render while any chunk is unscored or inconsistent, and names the
 chunks that need work. That refusal is the resume mechanism: fix the named
 chunks, run `report` again, and nothing already scored is lost.
@@ -144,12 +186,17 @@ uv run scripts/jobmatch.py fit --match /tmp/match.json
 ```
 
 `fit` validates the result and prints the same Markdown block the report uses,
-without creating a run.
+without creating a run. Add `--save` to remember the score in `jobs.db`, so the
+next "what did that job score?" question is a `lookup`, not a re-score.
 
 ## Rules
 
 - **Never invent a job.** No URL, title or description that is not in the chunk.
-- **Never edit `matches.all.json` or `report.md`.** They are rendered, not authored.
+- **Answer existing-job questions with `lookup`.** The database is the record of
+  what was collected and scored; re-scoring to answer "what did this get?" spends
+  tokens and can silently change the answer.
+- **Never edit `matches.all.json`, `report.md` or `jobs.db` by hand.** They are
+  written by the script, not authored.
 - **Never rewrite `descriptions.json`.** If a description is empty, score it low
   and say the description was unavailable in `gaps`.
 - **Never score a chunk you did not read in full.** Hidden truncation produces
