@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "JobDescription": {
+      "description": "A Job Entry plus the full posting text. The unit the matcher scores.",
+      "properties": {
+        "title": {
+          "description": "The full job title",
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "description": "The link to the job posting",
+          "title": "Url",
+          "type": "string"
+        },
+        "company": {
+          "description": "The company offering the job",
+          "title": "Company",
+          "type": "string"
+        },
+        "location": {
+          "description": "The location of the job, if available",
+          "title": "Location",
+          "type": "string"
+        },
+        "description": {
+          "description": "A full description of the job",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "url",
+        "company",
+        "location",
+        "description"
+      ],
+      "title": "JobDescription",
+      "type": "object"
+    }
+  },
+  "description": "Every Job Description collected in one run. The input to matching.",
+  "properties": {
+    "jobs": {
+      "description": "A list of job titles, companies, urls and descriptions collected during one run.",
+      "items": {
+        "$ref": "#/$defs/JobDescription"
+      },
+      "title": "Jobs",
+      "type": "array"
+    }
+  },
+  "title": "JobDescriptionList",
+  "type": "object"
+}

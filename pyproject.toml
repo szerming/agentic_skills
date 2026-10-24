@@ -1,0 +1,26 @@
+[project]
+name = "agentic-skills"
+version = "0.0.0"
+description = "Development harness for the skills in this repo. Not shipped."
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["pydantic>=2.12", "pytest>=8.3", "ruff>=0.15"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The skills are standalone folders, so their scripts live side by side and
+# import their own copies of job_models / job_workspace. tests/test_drift.py
+# proves those copies are byte-identical.
+pythonpath = [
+    "skills/candidate-profile/scripts",
+    "skills/job-search/scripts",
+    "skills/match-jobs/scripts",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

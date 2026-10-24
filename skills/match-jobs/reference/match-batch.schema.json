@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "MatchResult": {
+      "description": "A Job Description scored against a Candidate Profile.",
+      "properties": {
+        "title": {
+          "description": "The full job title",
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "description": "The link to the job posting",
+          "title": "Url",
+          "type": "string"
+        },
+        "company": {
+          "description": "The company offering the job",
+          "title": "Company",
+          "type": "string"
+        },
+        "location": {
+          "description": "The location of the job, if available",
+          "title": "Location",
+          "type": "string"
+        },
+        "description": {
+          "description": "A full description of the job",
+          "title": "Description",
+          "type": "string"
+        },
+        "domain": {
+          "description": "The domain that the job role is focusing on, (for example: FinTech, MedTech, Education, HealthTech, Defence)",
+          "title": "Domain",
+          "type": "string"
+        },
+        "salary_range": {
+          "description": "Salary range or renumeration, if stated or mentioned in the job description",
+          "title": "Salary Range",
+          "type": "string"
+        },
+        "match_score": {
+          "description": "A score from 0 to 100 indicating how well the candidate matches the job requirements.",
+          "title": "Match Score",
+          "type": "integer"
+        },
+        "reasoning": {
+          "description": "An explanation of why the candidate matches the job requirements.",
+          "title": "Reasoning",
+          "type": "string"
+        },
+        "strengths": {
+          "description": "Describe the strength and attributes that makes the candidate score higher in this job",
+          "title": "Strengths",
+          "type": "string"
+        },
+        "gaps": {
+          "description": "Highlight any gaps that the candidate has over this job description",
+          "title": "Gaps",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "url",
+        "company",
+        "location",
+        "description",
+        "domain",
+        "salary_range",
+        "match_score",
+        "reasoning",
+        "strengths",
+        "gaps"
+      ],
+      "title": "MatchResult",
+      "type": "object"
+    }
+  },
+  "description": "The model's scored output for one chunk. Written to matches/chunk-NN.json.",
+  "properties": {
+    "chunk": {
+      "description": "The index of the chunk these results belong to",
+      "title": "Chunk",
+      "type": "integer"
+    },
+    "match_results": {
+      "items": {
+        "$ref": "#/$defs/MatchResult"
+      },
+      "title": "Match Results",
+      "type": "array"
+    }
+  },
+  "required": [
+    "chunk"
+  ],
+  "title": "MatchChunk",
+  "type": "object"
+}

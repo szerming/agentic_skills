@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "EducationItem": {
+      "properties": {
+        "school": {
+          "title": "School",
+          "type": "string"
+        },
+        "department": {
+          "default": "",
+          "title": "Department",
+          "type": "string"
+        },
+        "qualification_achieved": {
+          "title": "Qualification Achieved",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "skills_learned": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Skills Learned",
+          "type": "array"
+        },
+        "start_year": {
+          "title": "Start Year",
+          "type": "integer"
+        },
+        "end_year": {
+          "title": "End Year",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "school",
+        "qualification_achieved",
+        "start_year",
+        "end_year"
+      ],
+      "title": "EducationItem",
+      "type": "object"
+    },
+    "ExperienceItem": {
+      "properties": {
+        "company": {
+          "title": "Company",
+          "type": "string"
+        },
+        "company_summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Company Summary"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "start_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Date"
+        },
+        "end_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Date"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "skills_used": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Skills Used",
+          "type": "array"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "company",
+        "title"
+      ],
+      "title": "ExperienceItem",
+      "type": "object"
+    }
+  },
+  "description": "The structured form of a CV. Extracted once, reused by every run.",
+  "properties": {
+    "full_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Full Name"
+    },
+    "headline": {
+      "title": "Headline",
+      "type": "string"
+    },
+    "years_experience": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Years Experience"
+    },
+    "seniority": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Seniority"
+    },
+    "locations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Locations",
+      "type": "array"
+    },
+    "remote_preferences": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Remote Preferences",
+      "type": "array"
+    },
+    "target_titles": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Target Titles",
+      "type": "array"
+    },
+    "hard_skills": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Hard Skills",
+      "type": "array"
+    },
+    "soft_skills": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Soft Skills",
+      "type": "array"
+    },
+    "domains": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Domains",
+      "type": "array"
+    },
+    "industries": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Industries",
+      "type": "array"
+    },
+    "strengths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Strengths",
+      "type": "array"
+    },
+    "unique_qualities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unique Qualities",
+      "type": "array"
+    },
+    "visa_constraints": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Visa Constraints",
+      "type": "array"
+    },
+    "experience": {
+      "items": {
+        "$ref": "#/$defs/ExperienceItem"
+      },
+      "title": "Experience",
+      "type": "array"
+    },
+    "education": {
+      "items": {
+        "$ref": "#/$defs/EducationItem"
+      },
+      "title": "Education",
+      "type": "array"
+    },
+    "evidence_snippets": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Snippets",
+      "type": "array"
+    }
+  },
+  "required": [
+    "headline"
+  ],
+  "title": "CandidateProfile",
+  "type": "object"
+}

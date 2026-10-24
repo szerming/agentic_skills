@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Local state written by the job-search skills
+.jobsearch/
+resource/
