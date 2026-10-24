@@ -1,6 +1,9 @@
 # agentic_skills
 
-[![CI](https://github.com/szerming/agentic_skills/actions/workflows/ci.yml/badge.svg)](https://github.com/szerming/agentic_skills/actions/workflows/ci.yml)
+[![Tests](https://github.com/szerming/agentic_skills/actions/workflows/ci.yml/badge.svg?branch=main&label=tests)](https://github.com/szerming/agentic_skills/actions/workflows/ci.yml)
+[![Python 3.12 | 3.13](https://img.shields.io/badge/python-3.12%20%7C%203.13-3776AB?logo=python&logoColor=white)](https://github.com/szerming/agentic_skills/blob/main/pyproject.toml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://docs.astral.sh/ruff/)
+[![Last commit](https://img.shields.io/github/last-commit/szerming/agentic_skills?logo=github)](https://github.com/szerming/agentic_skills/commits/main)
 
 A collection of agentic skills I have used.
 
