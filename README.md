@@ -1,5 +1,7 @@
 # agentic_skills
 
+[![CI](https://github.com/szerming/agentic_skills/actions/workflows/ci.yml/badge.svg)](https://github.com/szerming/agentic_skills/actions/workflows/ci.yml)
+
 A collection of agentic skills I have used.
 
 Each skill is a self-contained folder: a `SKILL.md` that says when to reach for it
@@ -359,6 +361,9 @@ uv sync
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
+
+CI runs the test suite on Python 3.12 and 3.13 for every push to `main` and
+every pull request; see `.github/workflows/ci.yml`.
 
 The tests cover everything deterministic: URL construction, dedupe, the cache and
 its prune, the collect wiring end to end with a faked browser, chunking, contract
