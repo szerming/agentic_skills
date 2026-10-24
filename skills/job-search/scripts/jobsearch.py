@@ -304,6 +304,11 @@ async def run_collect(args) -> dict:
             jobs: list[JobDescription] = []
             cached = scraped = failed = 0
 
+            def flush_descriptions() -> None:
+                """Persist progress atomically, so a crash costs at most one fetch."""
+                payload = JobDescriptionList(jobs=jobs)
+                write_json(descriptions_path, payload.model_dump(mode="json"))
+
             for index, entry in enumerate(entries, 1):
                 known = store.get(entry.url)
                 if known is not None:
@@ -328,13 +333,16 @@ async def run_collect(args) -> dict:
                     store.save(entry.url, description)
                     scraped += 1
                 jobs.append(description)
+                flush_descriptions()
                 await _sleep(args.delay)
 
     except SessionExpired as exc:
         _discard_empty_run(run_dir, created_run)
-        fail(str(exc), code=EXIT_SESSION, fix="jobsearch.py login")
+        extra = {"run": str(run_dir), "partial": True} if descriptions_path.is_file() else {}
+        fail(str(exc), code=EXIT_SESSION, fix="jobsearch.py login", **extra)
     except Exception as exc:  # noqa: BLE001 - report, do not dump a traceback
         _discard_empty_run(run_dir, created_run)
+        extra = {"run": str(run_dir), "partial": True} if descriptions_path.is_file() else {}
         text = str(exc).lower()
         if "executable" in text or "playwright install" in text or "channel" in text:
             fail(
@@ -342,11 +350,13 @@ async def run_collect(args) -> dict:
                 code=EXIT_CONFIG,
                 fix="Run: uv run --with playwright playwright install chromium, or pass "
                 "--channel chrome / --executable-path <chrome>.",
+                **extra,
             )
         fail(
             f"Run failed: {type(exc).__name__}: {exc}",
             code=EXIT_TASK_FAILED,
             fix="Run doctor to check the workspace, browser and session, then retry.",
+            **extra,
         )
 
     payload = JobDescriptionList(jobs=jobs)

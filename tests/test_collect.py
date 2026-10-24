@@ -80,6 +80,22 @@ class FakeBrowser:
         )
 
 
+class CrashingBrowser(FakeBrowser):
+    """Fails on the Nth description fetch, after the earlier ones were saved."""
+
+    description_calls = 0
+    crash_on = 3
+
+    async def get_description(self, entry, save_html=None):
+        type(self).description_calls += 1
+        if type(self).description_calls == type(self).crash_on:
+            raise RuntimeError("page crashed")
+        return (
+            JobDescription(description=f"Full text for {entry.url}", **entry.model_dump()),
+            None,
+        )
+
+
 def make_workspace(tmp_path: Path, terms: list[str]) -> Path:
     home = tmp_path / "resource"
     home.mkdir()
@@ -137,6 +153,36 @@ def test_collect_records_provenance(tmp_path, monkeypatch):
     assert metadata["terms"] == ["Software Architect"]
     assert metadata["count"] == 2
     assert metadata["descriptions_sha256"]
+
+
+def test_collect_persists_progress_when_a_later_fetch_crashes(tmp_path, monkeypatch):
+    import pytest
+
+    home = make_workspace(tmp_path, ["Software Architect", "Head of Software"])
+    monkeypatch.setattr(linkedin, "LinkedInBrowser", CrashingBrowser)
+    CrashingBrowser.description_calls = 0
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["collect", "--home", str(home), "--source", "terms", "--delay", "0"])
+    assert excinfo.value.code == 3
+
+    runs = sorted((home / "runs").iterdir())
+    assert len(runs) == 1, "a crash after a fetch must keep the partial run directory"
+    partial = json.loads((runs[0] / "descriptions.json").read_text())
+    assert [job["url"] for job in partial["jobs"]] == [
+        "https://www.linkedin.com/jobs/view/1/",
+        "https://www.linkedin.com/jobs/view/2/",
+    ], "the two descriptions fetched before the crash were not persisted"
+
+    # The partial output and the cache mean a retry only fetches the missing job.
+    monkeypatch.setattr(linkedin, "LinkedInBrowser", FakeBrowser)
+    FakeBrowser.description_calls = 0
+
+    second = collect(monkeypatch, home)
+
+    assert second["cached"] == 2
+    assert second["scraped"] == 1
+    assert FakeBrowser.description_calls == 1, "a job saved before the crash was fetched again"
 
 
 def test_collect_fails_without_search_terms(tmp_path, monkeypatch):

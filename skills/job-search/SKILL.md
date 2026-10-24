@@ -126,6 +126,12 @@ All under the workspace, never inside this skill's directory:
 | `<candidate>/runs/<timestamp>/run.json` | Provenance: terms, source, counts, hashes. |
 | `<home>/session/` | Persistent Chromium profile. Never commit it. |
 
+`descriptions.json` is rewritten atomically after every fetched posting, not only
+at the end. If a run crashes, it holds everything fetched so far (and `run.json`
+is absent); the error JSON marks it with `"partial": true` and the run path. The
+`jobs.db` cache is also written per posting, so retrying the same terms only
+fetches what is missing.
+
 `<candidate>` is `<home>/candidates/<name>`. If the workspace holds more than one
 candidate, pass `--candidate <name>` to every command; otherwise the skill refuses
 to guess.
