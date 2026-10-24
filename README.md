@@ -362,8 +362,10 @@ uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
-CI runs the test suite on Python 3.12 and 3.13 for every push to `main` and
-every pull request; see `.github/workflows/ci.yml`.
+CI runs the test suite on Python 3.12 and 3.13, plus the ruff lint and format
+checks, for every push to `main` and every pull request; see
+`.github/workflows/ci.yml`. Ruff is configured for a 100-character line length in
+`pyproject.toml`.
 
 The tests cover everything deterministic: URL construction, dedupe, the cache and
 its prune, the collect wiring end to end with a faked browser, chunking, contract

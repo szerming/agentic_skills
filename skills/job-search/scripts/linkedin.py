@@ -187,9 +187,7 @@ class LinkedInBrowser:
                     self._session_checked = True
                     return True
             except Exception as exc:  # noqa: BLE001
-                raise LinkedInError(
-                    "the browser window closed before sign-in completed"
-                ) from exc
+                raise LinkedInError("the browser window closed before sign-in completed") from exc
             await asyncio.sleep(2)
         return False
 

@@ -148,9 +148,7 @@ def resolve_home(explicit: str | Path | None = None) -> Path:
     )
 
 
-def write_config(
-    home: Path, config_dir: Path | None = None, candidate: str | None = None
-) -> Path:
+def write_config(home: Path, config_dir: Path | None = None, candidate: str | None = None) -> Path:
     """Write .jobsearch/config.json under `config_dir` (default: cwd)."""
     target_dir = (config_dir or Path.cwd()).resolve() / CONFIG_DIR_NAME
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -173,8 +171,7 @@ def candidate_dirs(home: Path) -> list[Path]:
 def has_flat_layout(home: Path) -> bool:
     """True for a pre-candidate workspace with state directly under <home>."""
     return any(
-        (home / name).exists()
-        for name in ("profile.json", "search_terms.json", "jobs.db", "runs")
+        (home / name).exists() for name in ("profile.json", "search_terms.json", "jobs.db", "runs")
     )
 
 
@@ -202,9 +199,7 @@ def discover_cvs(candidate_dir: Path) -> list[Path]:
     if not cv_dir.is_dir():
         return []
     return sorted(
-        path
-        for path in cv_dir.iterdir()
-        if path.is_file() and path.suffix.lower() in CV_SUFFIXES
+        path for path in cv_dir.iterdir() if path.is_file() and path.suffix.lower() in CV_SUFFIXES
     )
 
 

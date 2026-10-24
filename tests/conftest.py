@@ -13,9 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
-REFERENCE_REPO = Path(
-    os.environ.get("JOBSEARCH_REFERENCE", ".")
-)
+REFERENCE_REPO = Path(os.environ.get("JOBSEARCH_REFERENCE", "."))
 
 
 @pytest.fixture(scope="session")

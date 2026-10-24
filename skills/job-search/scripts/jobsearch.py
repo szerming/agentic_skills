@@ -542,9 +542,7 @@ def run_doctor(args) -> dict:
         record(
             "candidate",
             workspace.candidate is not None or workspace.profile.is_file(),
-            workspace.candidate
-            if workspace.candidate
-            else f"flat layout at {workspace.home}",
+            workspace.candidate if workspace.candidate else f"flat layout at {workspace.home}",
             "jobprofile.py candidate --candidate <name> --cv <path>",
             critical=False,
         )
