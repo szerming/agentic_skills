@@ -37,15 +37,18 @@ PAGE_SIZE = 25
 # Selectors are the fragile part of this skill. They live in one place so a DOM
 # change is a one-file fix, and `describe --save-html` dumps the page when they
 # break.
-SEL_RESULTS_LIST = ".scaffold-layout__list > div > ul"
-SEL_RESULTS_FOOTER = "#jobs-search-results-footer"
-SEL_CARD = ".scaffold-layout__list-item"
-SEL_CARD_TITLE = ".job-card-list__title--link"
-SEL_CARD_COMPANY = ".artdeco-entity-lockup__subtitle"
-SEL_CARD_LOCATION = ".artdeco-entity-lockup__caption"
-SEL_PAGINATION = ".jobs-search-pagination"
-SEL_DESCRIPTION = '[componentkey^="JobDetails_AboutTheJob_"]'
-SEL_DESCRIPTION_BODY = 'span[data-testid="expandable-text-box"]'
+#
+# LinkedIn replaced the old `.scaffold-layout__list` markup in 2026 with a
+# virtualised React list. Cards are no longer anchors: each one is a role=button
+# keyed by job id, so the posting URL is rebuilt from the key.
+SEL_RESULTS_LIST = '[role="button"][componentkey^="job-card-component-ref-"]'
+SEL_CARD = '[role="button"][componentkey^="job-card-component-ref-"]'
+SEL_CARD_KEY_PREFIX = "job-card-component-ref-"
+SEL_NEXT_PAGE = 'button[aria-label="Next"]'
+SEL_DESCRIPTION = (
+    'xpath=//h2[normalize-space(.)="About the job"]'
+    '/following::span[@data-testid="expandable-text-box"][1]'
+)
 DESCRIPTION_HEADING = "About the job"
 NO_JOBS_TEXT = "No matching jobs found."
 
@@ -231,7 +234,6 @@ class LinkedInBrowser:
                 return entries, False
 
             await self._page.wait_for_selector(SEL_RESULTS_LIST)
-            await self._page.wait_for_selector(SEL_RESULTS_FOOTER)
 
             cards = self._page.locator(SEL_CARD)
             total = await self._settle_cards(cards)
@@ -242,10 +244,8 @@ class LinkedInBrowser:
                 seen.add(entry.url)
                 entries.append(entry)
 
-            has_next = False
-            if await self._page.is_visible(SEL_PAGINATION):
-                next_button = self._page.get_by_role("button", name="View next page")
-                has_next = await next_button.is_visible()
+            next_button = self._page.locator(SEL_NEXT_PAGE).first
+            has_next = await next_button.is_visible() and await next_button.is_enabled()
 
         except SessionExpired:
             raise
@@ -297,22 +297,46 @@ class LinkedInBrowser:
     async def _read_card(self, card) -> JobEntry | None:
         """Read one result card. Missing fields degrade instead of aborting the page."""
         try:
-            title_locator = card.locator(SEL_CARD_TITLE)
-            if not await title_locator.count():
-                return None  # still a placeholder; the caller retries
-            title = (await title_locator.inner_text()).strip()
-
-            href = await title_locator.get_attribute("href")
-            if not href:
+            key = await card.get_attribute("componentkey") or ""
+            if not key.startswith(SEL_CARD_KEY_PREFIX):
                 return None
-            clean_url = href.split("?")[0]
-            if clean_url.startswith("/"):
-                clean_url = f"https://www.linkedin.com{clean_url}"
+            job_id = key[len(SEL_CARD_KEY_PREFIX) :]
+            if not job_id.isdigit():
+                return None
 
-            company = await self._inner_text(card, SEL_CARD_COMPANY)
-            location = await self._inner_text(card, SEL_CARD_LOCATION)
+            paragraphs = card.locator("p")
+            if not await paragraphs.count():
+                return None  # still a placeholder; the caller retries
 
-            return JobEntry(title=title, url=clean_url, company=company, location=location)
+            # The title paragraph also holds screen-reader badges such as
+            # "Selected, " and "(Verified job)"; the visible title is the last
+            # non-empty line.
+            title_lines = [
+                line.strip()
+                for line in (await paragraphs.nth(0).inner_text()).splitlines()
+                if line.strip()
+            ]
+            title = title_lines[-1] if title_lines else ""
+            if not title:
+                return None
+
+            company = (
+                (await paragraphs.nth(1).inner_text()).strip()
+                if await paragraphs.count() > 1
+                else ""
+            )
+            location = (
+                (await paragraphs.nth(2).inner_text()).strip()
+                if await paragraphs.count() > 2
+                else ""
+            )
+
+            return JobEntry(
+                title=title,
+                url=f"https://www.linkedin.com/jobs/view/{job_id}/",
+                company=company,
+                location=location,
+            )
         except Exception as exc:  # noqa: BLE001
             print(f"[jobsearch] skipped unreadable card: {exc}", file=sys.stderr)
             return None
@@ -353,21 +377,15 @@ class LinkedInBrowser:
             await self._page.goto(entry.url, wait_until="domcontentloaded")
             self._guard_url(self._page.url)
 
-            container = self._page.locator(SEL_DESCRIPTION).first
-            await container.wait_for(state="attached", timeout=self.config.timeout_ms)
+            body = self._page.locator(SEL_DESCRIPTION).first
+            await body.wait_for(state="attached", timeout=self.config.timeout_ms)
 
-            body = container.locator(SEL_DESCRIPTION_BODY)
             text = ""
             for _ in range(20):  # the component attaches before it has text
-                if await body.count():
-                    text = (await body.first.inner_text()).strip()
+                text = (await body.inner_text()).strip()
                 if text:
                     break
                 await asyncio.sleep(0.3)
-            if not text:
-                text = (await container.inner_text()).strip()
-                if text.startswith(DESCRIPTION_HEADING):
-                    text = text[len(DESCRIPTION_HEADING) :].strip()
             # The expander is a button inside the text span, not part of the
             # posting; inner_text renders it as a trailing "… more".
             text = re.sub(r"\s*(?:…|\.\.\.)\s*more\s*$", "", text).strip()
