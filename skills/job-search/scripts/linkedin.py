@@ -380,11 +380,21 @@ class LinkedInBrowser:
             body = self._page.locator(SEL_DESCRIPTION).first
             await body.wait_for(state="attached", timeout=self.config.timeout_ms)
 
+            # The panel attaches with a short preview and then keeps filling in,
+            # so reading the first non-empty value silently truncates long posts.
+            # Wait until the length stops changing instead.
             text = ""
-            for _ in range(20):  # the component attaches before it has text
+            previous = -1
+            stable = 0
+            for _ in range(40):  # at most ~12s
                 text = (await body.inner_text()).strip()
-                if text:
-                    break
+                if text and len(text) == previous:
+                    stable += 1
+                    if stable >= 3:
+                        break
+                else:
+                    stable = 0
+                previous = len(text)
                 await asyncio.sleep(0.3)
             # The expander is a button inside the text span, not part of the
             # posting; inner_text renders it as a trailing "… more".
